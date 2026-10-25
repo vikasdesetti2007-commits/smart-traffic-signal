@@ -172,3 +172,22 @@ def test_multi_lane_telemetry_vehicles_endpoint():
     assert s_metrics["queue_length"] == 6
     assert s_metrics["lane_queues"] == {"lane1": 3, "lane2": 3}
 
+
+def test_favicon_endpoint():
+    """Verify GET and HEAD /favicon.ico return 200 OK and valid icon content type."""
+    # GET /favicon.ico
+    response = client.get("/favicon.ico")
+    assert response.status_code == 200
+    assert "image/x-icon" in response.headers.get("content-type", "") or "image/vnd.microsoft.icon" in response.headers.get("content-type", "")
+    assert len(response.content) > 0
+
+    # HEAD /favicon.ico
+    head_resp = client.head("/favicon.ico")
+    assert head_resp.status_code == 200
+
+    # GET /static/favicon.ico
+    static_resp = client.get("/static/favicon.ico")
+    assert static_resp.status_code == 200
+    assert len(static_resp.content) == len(response.content)
+
+

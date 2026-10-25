@@ -219,3 +219,13 @@ async def serve_index():
     if os.path.exists(index_path):
         return FileResponse(index_path)
     return {"message": "Smart Traffic Signal API is active. Static files not yet generated."}
+
+
+@app.api_route("/favicon.ico", methods=["GET", "HEAD"], include_in_schema=False)
+async def serve_favicon():
+    """Serve the application favicon."""
+    favicon_path = os.path.join(STATIC_DIR, "favicon.ico")
+    if os.path.exists(favicon_path):
+        return FileResponse(favicon_path, media_type="image/x-icon")
+    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Favicon not found")
+
