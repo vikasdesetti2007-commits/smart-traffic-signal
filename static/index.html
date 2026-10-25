@@ -1,0 +1,480 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Smart Traffic Signal Controller | FastAPI Simulation</title>
+  <link rel="stylesheet" href="/static/style.css?v=2.3.2">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+</head>
+<body>
+  <div class="app-container">
+    <!-- Top Bar Header -->
+    <header class="app-header">
+      <div class="header-left">
+        <div class="logo-icon">🚦</div>
+        <div>
+          <h1>Smart Traffic Signal Command Center</h1>
+          <p class="subtitle">Deterministic Intersection Controller & Formal Logic Demonstration</p>
+        </div>
+      </div>
+      <div class="header-badges">
+        <span class="badge badge-sim">⚠️ SIMULATION ONLY — NOT REAL INFRASTRUCTURE</span>
+        <div class="status-pill" id="backendStatusPill">
+          <span class="pulse-dot"></span>
+          <span id="backendStatusText">Connecting...</span>
+        </div>
+      </div>
+    </header>
+
+    <!-- Main Grid Layout -->
+    <main class="dashboard-grid">
+      <!-- Left Column: Intersection Canvas Simulation -->
+      <section class="simulation-column">
+        <div class="card canvas-card">
+          <div class="card-header">
+            <div class="card-title">
+              <span class="dot-indicator"></span>
+              <h2>3D Autonomous Intersection View (WebGL Simulation)</h2>
+            </div>
+            <div class="canvas-telemetry">
+              <span class="telemetry-item">Active Phase: <strong id="telemetryPhase">INITIALIZING</strong></span>
+              <span class="telemetry-item">Phase Clock: <strong id="telemetryTimer">0.0s / 0.0s</strong></span>
+            </div>
+          </div>
+
+          <!-- Camera Perspective Toolbar -->
+          <div class="camera-toolbar">
+            <div class="cam-btn-group">
+              <button class="cam-btn active" id="btnCamIsometric" title="Cinematic Elevated Isometric View">📐 Intersection Focus</button>
+              <button class="cam-btn" id="btnCamTopDown" title="Top-Down Overhead Plan View">🛰️ Overhead Plan</button>
+              <button class="cam-btn" id="btnCamStreet" title="Street-Level Driver Perspective">🚗 Street Level</button>
+              <button class="cam-btn" id="btnCamReset" title="Reset Camera View">↺ Reset View</button>
+            </div>
+            <div class="camera-hint">🖱️ Left Drag: Orbit | Right Drag: Pan | Scroll: Zoom</div>
+          </div>
+          
+          <div class="canvas-wrapper" id="canvasWrapper">
+            <div id="webglContainer" class="webgl-container"></div>
+            
+            <!-- Fixed World-Oriented Compass Indicator (Rotates with Camera Orbit) -->
+            <div class="compass-widget" id="compassWidget" title="Orientation Compass (N/E/S/W) — Click to Align North">
+              <div class="compass-ring">
+                <div class="compass-dial" id="compassDial">
+                  <div class="compass-mark mark-n"><span class="compass-arrow">▲</span>N</div>
+                  <div class="compass-mark mark-e">E</div>
+                  <div class="compass-mark mark-s">S</div>
+                  <div class="compass-mark mark-w">W</div>
+                  <div class="compass-needle"></div>
+                </div>
+                <div class="compass-pivot"></div>
+              </div>
+            </div>
+
+            <!-- Canvas World-Anchored HUD Overlays with Matching Direction Indicators -->
+            <div class="hud-overlay" id="hudNorth">
+              <div class="hud-row-head">
+                <span class="hud-dir"><span class="hud-tag north-tag">NORTH ↑</span></span>
+                <span class="hud-ext" id="hudExtNorth" style="display:none;">[EXTENDED]</span>
+              </div>
+              <div class="hud-sub">Incoming from North, travelling southbound</div>
+              <div class="hud-row-signal">
+                <span class="hud-light" id="hudLightNorth">● RED</span>
+                <span class="hud-timer" id="hudTimerNorth">--s</span>
+              </div>
+              <div class="hud-row-foot">
+                <span class="hud-ped" id="hudPedNorth">PED: DONT WALK</span>
+                <span class="hud-density" id="hudDensityNorth">Q: 0</span>
+              </div>
+            </div>
+            <div class="hud-overlay" id="hudSouth">
+              <div class="hud-row-head">
+                <span class="hud-dir"><span class="hud-tag south-tag">SOUTH ↓</span></span>
+                <span class="hud-ext" id="hudExtSouth" style="display:none;">[EXTENDED]</span>
+              </div>
+              <div class="hud-sub">Incoming from South, travelling northbound</div>
+              <div class="hud-row-signal">
+                <span class="hud-light" id="hudLightSouth">● RED</span>
+                <span class="hud-timer" id="hudTimerSouth">--s</span>
+              </div>
+              <div class="hud-row-foot">
+                <span class="hud-ped" id="hudPedSouth">PED: DONT WALK</span>
+                <span class="hud-density" id="hudDensitySouth">Q: 0</span>
+              </div>
+            </div>
+            <div class="hud-overlay" id="hudWest">
+              <div class="hud-row-head">
+                <span class="hud-dir"><span class="hud-tag west-tag">WEST ←</span></span>
+                <span class="hud-ext" id="hudExtWest" style="display:none;">[EXTENDED]</span>
+              </div>
+              <div class="hud-sub">Incoming from West, travelling eastbound</div>
+              <div class="hud-row-signal">
+                <span class="hud-light" id="hudLightWest">● RED</span>
+                <span class="hud-timer" id="hudTimerWest">--s</span>
+              </div>
+              <div class="hud-row-foot">
+                <span class="hud-ped" id="hudPedWest">PED: DONT WALK</span>
+                <span class="hud-density" id="hudDensityWest">Q: 0</span>
+              </div>
+            </div>
+            <div class="hud-overlay" id="hudEast">
+              <div class="hud-row-head">
+                <span class="hud-dir"><span class="hud-tag east-tag">EAST →</span></span>
+                <span class="hud-ext" id="hudExtEast" style="display:none;">[EXTENDED]</span>
+              </div>
+              <div class="hud-sub">Incoming from East, travelling westbound</div>
+              <div class="hud-row-signal">
+                <span class="hud-light" id="hudLightEast">● RED</span>
+                <span class="hud-timer" id="hudTimerEast">--s</span>
+              </div>
+              <div class="hud-row-foot">
+                <span class="hud-ped" id="hudPedEast">PED: DONT WALK</span>
+                <span class="hud-density" id="hudDensityEast">Q: 0</span>
+              </div>
+            </div>
+
+            <!-- Priority Notice Banner -->
+            <div class="priority-banner" id="priorityBanner" style="display: none;">
+              <span class="siren-icon">🚨</span>
+              <span id="priorityBannerText">AMBULANCE INCOMING — CLEARING INTERSECTION</span>
+            </div>
+          </div>
+
+          <!-- Cardinal Approaches Signal Status Grid with Matching Direction Badges -->
+          <div class="approaches-status-panel">
+            <div class="approach-badge" id="badgeNorth">
+              <div class="badge-head">
+                <span class="badge-dir"><span class="badge-tag north-tag">NORTH ↑</span></span>
+                <span class="badge-ext" id="badgeExtNorth" style="display:none;">EXTENDED</span>
+                <span class="badge-sub">Incoming from North, travelling southbound</span>
+              </div>
+              <div class="badge-status">
+                <span class="badge-light red" id="panelLightNorth">● RED</span>
+                <span class="badge-timer" id="panelTimerNorth">--s</span>
+              </div>
+              <div class="badge-metrics">
+                <span class="badge-density" id="panelDensityNorth">LOW (0)</span>
+                <span class="badge-ped" id="panelPedNorth">DONT WALK</span>
+              </div>
+            </div>
+            <div class="approach-badge" id="badgeSouth">
+              <div class="badge-head">
+                <span class="badge-dir"><span class="badge-tag south-tag">SOUTH ↓</span></span>
+                <span class="badge-ext" id="badgeExtSouth" style="display:none;">EXTENDED</span>
+                <span class="badge-sub">Incoming from South, travelling northbound</span>
+              </div>
+              <div class="badge-status">
+                <span class="badge-light red" id="panelLightSouth">● RED</span>
+                <span class="badge-timer" id="panelTimerSouth">--s</span>
+              </div>
+              <div class="badge-metrics">
+                <span class="badge-density" id="panelDensitySouth">LOW (0)</span>
+                <span class="badge-ped" id="panelPedSouth">DONT WALK</span>
+              </div>
+            </div>
+            <div class="approach-badge" id="badgeEast">
+              <div class="badge-head">
+                <span class="badge-dir"><span class="badge-tag east-tag">EAST →</span></span>
+                <span class="badge-ext" id="badgeExtEast" style="display:none;">EXTENDED</span>
+                <span class="badge-sub">Incoming from East, travelling westbound</span>
+              </div>
+              <div class="badge-status">
+                <span class="badge-light red" id="panelLightEast">● RED</span>
+                <span class="badge-timer" id="panelTimerEast">--s</span>
+              </div>
+              <div class="badge-metrics">
+                <span class="badge-density" id="panelDensityEast">LOW (0)</span>
+                <span class="badge-ped" id="panelPedEast">DONT WALK</span>
+              </div>
+            </div>
+            <div class="approach-badge" id="badgeWest">
+              <div class="badge-head">
+                <span class="badge-dir"><span class="badge-tag west-tag">WEST ←</span></span>
+                <span class="badge-ext" id="badgeExtWest" style="display:none;">EXTENDED</span>
+                <span class="badge-sub">Incoming from West, travelling eastbound</span>
+              </div>
+              <div class="badge-status">
+                <span class="badge-light red" id="panelLightWest">● RED</span>
+                <span class="badge-timer" id="panelTimerWest">--s</span>
+              </div>
+              <div class="badge-metrics">
+                <span class="badge-density" id="panelDensityWest">LOW (0)</span>
+                <span class="badge-ped" id="panelPedWest">DONT WALK</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="canvas-legend">
+            <div class="legend-item"><span class="legend-swatch car-regular"></span> 3D Fleet (Sedan, Hatchback, SUV, Taxi, Van, Truck, Bus)</div>
+            <div class="legend-item"><span class="legend-swatch car-ambulance"></span> Emergency Ambulance (Strobe Bar & Siren)</div>
+            <div class="legend-item"><span class="legend-swatch ped-swatch"></span> 3D Pedestrians</div>
+            <div class="legend-item"><span class="legend-swatch turn-swatch"></span> Turn Indicators</div>
+          </div>
+        </div>
+
+        <!-- System Audit Event Log -->
+        <div class="card log-card">
+          <div class="card-header">
+            <div class="card-title">
+              <span class="icon">📜</span>
+              <h2>Real-Time Controller Decision & Safety Audit Log</h2>
+            </div>
+            <button class="btn-ghost" id="btnClearLog">Clear Log</button>
+          </div>
+          <div class="log-container" id="eventLogList">
+            <!-- Event entries inserted dynamically -->
+          </div>
+        </div>
+      </section>
+
+      <!-- Right Column: Controls, Propositional Logic & Truth Table -->
+      <aside class="controls-column">
+        <!-- Operator Controls -->
+        <div class="card control-card">
+          <div class="card-header">
+            <div class="card-title">
+              <span class="icon">🎛️</span>
+              <h2>Intersection Control Panel</h2>
+            </div>
+          </div>
+          <div class="card-body">
+            <!-- Simulation Execution Controls -->
+            <div class="control-group">
+              <label class="control-label">Simulation Clock</label>
+              <div class="btn-group">
+                <button class="btn btn-primary" id="btnStart">▶ Resume</button>
+                <button class="btn btn-secondary" id="btnPause">⏸ Pause</button>
+                <button class="btn btn-secondary" id="btnStep">⏭ Step (+1s)</button>
+                <button class="btn btn-outline" id="btnReset">↺ Reset</button>
+              </div>
+            </div>
+
+            <!-- Traffic Density Control -->
+            <div class="control-group">
+              <label class="control-label">
+                Traffic Density & Queues
+                <span class="helper-text" id="densityHelperText">(Proposition P)</span>
+              </label>
+
+              <!-- Approach Demand Focus Selector (Requirement 3) -->
+              <div class="density-approach-selector">
+                <label class="control-sublabel">Approach Demand Focus:</label>
+                <div class="approach-btn-group" id="densityApproachBtnGroup">
+                  <button type="button" class="btn-approach active" data-approach="south" id="btnAppSouth">South</button>
+                  <button type="button" class="btn-approach" data-approach="north" id="btnAppNorth">North</button>
+                  <button type="button" class="btn-approach" data-approach="east" id="btnAppEast">East</button>
+                  <button type="button" class="btn-approach" data-approach="west" id="btnAppWest">West</button>
+                </div>
+              </div>
+
+              <!-- Density Setting Buttons -->
+              <div class="density-buttons">
+                <button type="button" class="btn-toggle" data-density="low" id="btnDensityLow">Low (P=0)</button>
+                <button type="button" class="btn-toggle active" data-density="medium" id="btnDensityMed">Medium (P=0)</button>
+                <button type="button" class="btn-toggle" data-density="high" id="btnDensityHigh">High (P=1)</button>
+              </div>
+
+              <!-- Queue & Adaptive Formula Card (Requirement 4) -->
+              <div class="density-formula-card">
+                <div class="formula-line">
+                  <span class="formula-title">Adaptive Green:</span>
+                  <code>G = clamp(8 + q×1.5, 6, 22)s</code>
+                </div>
+                <div class="high-demand-indicator-row">
+                  <span class="hdi-label">Active Focus:</span>
+                  <span class="hdi-badge" id="highDemandBadge">SOUTH</span>
+                  <span class="hdi-seq">→ EAST → NORTH → WEST</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- Vehicle Speed Control -->
+            <div class="control-group speed-group">
+              <div class="group-title speed-title-row">
+                <div class="speed-label-left">
+                  <span class="icon">⚡</span>
+                  <label class="control-label">Vehicle Speed Meter</label>
+                </div>
+                <span class="speed-readout" id="speedReadout">50 km/h</span>
+              </div>
+              <div class="speed-slider-wrapper">
+                <input type="range" id="vehicleSpeedSlider" min="10" max="100" step="5" value="50">
+                <div class="slider-marks">
+                  <span>10 km/h</span>
+                  <span>25 (Slow)</span>
+                  <span>50 (Normal)</span>
+                  <span>80 (Fast)</span>
+                  <span>100 km/h</span>
+                </div>
+              </div>
+              <div class="btn-group speed-presets">
+                <button class="btn btn-secondary btn-sm" id="btnSpeedSlow" data-speed="25">Slow (25)</button>
+                <button class="btn btn-primary btn-sm" id="btnSpeedNormal" data-speed="50">Normal (50)</button>
+                <button class="btn btn-secondary btn-sm" id="btnSpeedFast" data-speed="80">Fast (80)</button>
+              </div>
+              <div class="speed-telemetry">
+                <span>Target: <strong id="telemetryTargetSpeed">50 km/h</strong></span>
+                <span>Fleet Avg: <strong id="telemetryAvgSpeed">0.0 km/h</strong></span>
+              </div>
+              <p class="control-tip">Adjusts cruising speed for normal traffic and emergency vehicle. Vehicles accelerate and brake smoothly.</p>
+            </div>
+
+            <!-- Ambulance Priority Action -->
+            <div class="control-group emergency-group">
+              <div class="group-title">
+                <span class="icon">🚑</span>
+                <label class="control-label">Emergency Vehicle Preemption (Proposition Q)</label>
+              </div>
+              <div class="emergency-controls">
+                <div class="select-wrapper">
+                  <label for="ambulanceApproach">Approach:</label>
+                  <select id="ambulanceApproach">
+                    <option value="south" selected>South Approach</option>
+                    <option value="north">North Approach</option>
+                    <option value="east">East Approach</option>
+                    <option value="west">West Approach</option>
+                  </select>
+                </div>
+                <div class="select-wrapper">
+                  <label for="ambulanceRoute">Movement / Route:</label>
+                  <select id="ambulanceRoute">
+                    <option value="straight" selected>Straight (Opposite Road)</option>
+                    <option value="left">Turn Left</option>
+                    <option value="right">Turn Right</option>
+                  </select>
+                </div>
+                <div class="btn-dual">
+                  <button class="btn btn-emergency" id="btnAmbulanceDispatch">🚨 Dispatch Ambulance</button>
+                  <button class="btn btn-outline-danger" id="btnAmbulanceClear">Clear</button>
+                </div>
+              </div>
+              <p class="control-tip">Ambulance initiates safe clearance intervals on conflicting approaches, then proceeds with dedicated continuous Green.</p>
+            </div>
+
+            <!-- Pedestrian Crossing Action -->
+            <div class="control-group ped-group">
+              <div class="group-title">
+                <span class="icon">🚶</span>
+                <label class="control-label">Pedestrian Crossing Request (Proposition R)</label>
+              </div>
+              <div class="ped-controls">
+                <div class="select-wrapper">
+                  <label for="pedestrianCrossingSelect">Crossing:</label>
+                  <select id="pedestrianCrossingSelect">
+                    <option value="north" selected>North crossing (North zebra crosswalk)</option>
+                    <option value="south">South crossing (South zebra crosswalk)</option>
+                    <option value="east">East crossing (East zebra crosswalk)</option>
+                    <option value="west">West crossing (West zebra crosswalk)</option>
+                  </select>
+                </div>
+                <div class="ped-btn-row">
+                  <button class="btn btn-pedestrian" id="btnPedestrianWalk">
+                    <span class="hand-icon">✋</span> Request Walk Phase
+                  </button>
+                  <div class="ped-countdown" id="pedCountdownBadge">Walk Inactive</div>
+                </div>
+              </div>
+              <p class="control-tip">Halts conflicting vehicles via yellow and all-red clearance before activating walk signal on the selected zebra crossing.</p>
+            </div>
+          </div>
+        </div>
+
+        <!-- Propositional Logic Demonstration -->
+        <div class="card logic-card">
+          <div class="card-header">
+            <div class="card-title">
+              <span class="icon">📐</span>
+              <h2>Propositional Logic Demonstration</h2>
+            </div>
+          </div>
+          <div class="card-body">
+            <div class="formula-box">
+              <div class="formula-title">FORMAL RULE SPECIFICATION:</div>
+              <div class="formula-expression">G = (P ∨ Q) ∧ ¬R</div>
+              <div class="formula-legend">
+                <span><strong>P</strong> = High Density</span>
+                <span><strong>Q</strong> = Emergency Detected</span>
+                <span><strong>R</strong> = Pedestrian Active</span>
+                <span><strong>G</strong> = Green Flow Permitted</span>
+              </div>
+            </div>
+
+            <!-- Live Evaluator State -->
+            <div class="live-eval-grid">
+              <div class="eval-box" id="evalBoxP">
+                <span class="eval-prop">P</span>
+                <span class="eval-val" id="evalValP">0</span>
+                <span class="eval-sub">Traffic High</span>
+              </div>
+              <div class="eval-box" id="evalBoxQ">
+                <span class="eval-prop">Q</span>
+                <span class="eval-val" id="evalValQ">0</span>
+                <span class="eval-sub">Emergency</span>
+              </div>
+              <div class="eval-box" id="evalBoxR">
+                <span class="eval-prop">R</span>
+                <span class="eval-val" id="evalValR">0</span>
+                <span class="eval-sub">Pedestrian</span>
+              </div>
+              <div class="eval-box eval-g" id="evalBoxG">
+                <span class="eval-prop">G</span>
+                <span class="eval-val" id="evalValG">0</span>
+                <span class="eval-sub">Green Output</span>
+              </div>
+            </div>
+
+            <div class="logic-explanation" id="logicExplanation">
+              Evaluating current intersection parameters...
+            </div>
+
+            <div class="safety-distinction-note">
+              <strong>Engineering Note:</strong> The boolean proposition demonstrates logical permissibility. The <em>Safe Intersection Controller</em> independently governs physical clearance intervals (Yellow/All-Red), spatial lane interlocks, and acceleration limits.
+            </div>
+
+            <!-- Truth Table -->
+            <div class="truth-table-container">
+              <div class="table-title">Full Proposition Truth Table (8 Combinations):</div>
+              <table class="truth-table" id="truthTable">
+                <thead>
+                  <tr>
+                    <th>#</th>
+                    <th>P</th>
+                    <th>Q</th>
+                    <th>R</th>
+                    <th>(P∨Q)</th>
+                    <th>¬R</th>
+                    <th>G</th>
+                    <th>Scenario & Safety Action</th>
+                  </tr>
+                </thead>
+                <tbody id="truthTableBody">
+                  <!-- Truth table rows inserted dynamically -->
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </aside>
+    </main>
+  </div>
+
+  <!-- Three.js & OrbitControls 3D Libraries -->
+  <script src="/static/vendor/three.min.js"></script>
+  <script src="/static/vendor/OrbitControls.js"></script>
+  <script>
+    if (typeof THREE === 'undefined') {
+      document.write('<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"><\\/script>');
+    }
+  </script>
+  <script>
+    if (typeof THREE !== 'undefined' && typeof THREE.OrbitControls === 'undefined') {
+      document.write('<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"><\\/script>');
+    }
+  </script>
+
+  <!-- Application Logic & 3D Simulation Controller -->
+  <script src="/static/app.js?v=2.7.0"></script>
+</body>
+</html>
