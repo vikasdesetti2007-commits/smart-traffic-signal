@@ -2578,17 +2578,21 @@ function hasRightOfWay(vehicleA, vehicleB) {
   if (vehicleA.isAmbulance && !vehicleB.isAmbulance) return true;
   if (!vehicleA.isAmbulance && vehicleB.isAmbulance) return false;
 
-  // 2. Vehicles legitimately inside or clearing the intersection have right-of-way over vehicles outside / waiting at stop lines
+  // 2. Deadlock resolution: designated clearance vehicle has right-of-way
+  if (vehicleA.isDeadlockPriority && !vehicleB.isDeadlockPriority) return true;
+  if (!vehicleA.isDeadlockPriority && vehicleB.isDeadlockPriority) return false;
+
+  // 3. Vehicles legitimately inside or clearing the intersection have right-of-way over vehicles outside / waiting at stop lines
   if (vehicleA.inIntersection && !vehicleB.inIntersection) return true;
   if (!vehicleA.inIntersection && vehicleB.inIntersection) return false;
 
-  // 3. Vehicles with legitimate entry permission clearing during yellow/all-red have priority over vehicles waiting at red stop lines
+  // 4. Vehicles with legitimate entry permission clearing during yellow/all-red have priority over vehicles waiting at red stop lines
   const sigA = vehicleA.getSignalColor();
   const sigB = vehicleB.getSignalColor();
   if (vehicleA.hasEnteredOnGreen && sigB === 'RED' && !vehicleB.inIntersection) return true;
   if (vehicleB.hasEnteredOnGreen && sigA === 'RED' && !vehicleA.inIntersection) return false;
 
-  // 4. Same lane & approach: the vehicle ahead always has right-of-way (follower yields)
+  // 5. Same lane & approach: the vehicle ahead always has right-of-way (follower yields)
   if (vehicleA.approach === vehicleB.approach && vehicleA.laneIndex === vehicleB.laneIndex) {
     const gapA = vehicleA.getDistanceToVehicleAhead(vehicleB);
     if (gapA >= 0) return false; // vehicleB is ahead, vehicleA yields
@@ -2596,27 +2600,29 @@ function hasRightOfWay(vehicleA, vehicleB) {
     if (gapB >= 0) return true;  // vehicleA is ahead, vehicleB yields
   }
 
-  // 5. If both vehicles are inside the intersection box:
+  // 6. If both vehicles are inside the intersection box:
   if (vehicleA.inIntersection && vehicleB.inIntersection) {
-    // If both turning, the one with greater turn progress has priority to exit first
+    // 6a. If both turning, the one with greater turn progress has priority to exit first
     if (vehicleA.route !== 'straight' && vehicleB.route !== 'straight') {
       if (Math.abs((vehicleA.turnProgress || 0) - (vehicleB.turnProgress || 0)) > 0.03) {
         return (vehicleA.turnProgress || 0) > (vehicleB.turnProgress || 0);
       }
     }
-    // Vehicle closer to its exit boundary has priority to discharge first
+    // 6b. Vehicle closer to its exit boundary has priority to discharge first
     const distA = Math.hypot(vehicleA.mesh.position.x, vehicleA.mesh.position.z);
     const distB = Math.hypot(vehicleB.mesh.position.x, vehicleB.mesh.position.z);
-    if (Math.abs(distA - distB) > 0.4) {
+    if (Math.abs(distA - distB) > 0.3) {
       return distA > distB;
     }
+    // 6c. Inside intersection precedence: vehicle that entered first (lower ID) clears first
+    return (vehicleA.id || 0) < (vehicleB.id || 0);
   }
 
-  // 6. Straight-moving vehicles have right-of-way over vehicles turning across paths
+  // 7. Outside / entry: straight-moving vehicles have right-of-way over vehicles turning across paths
   if (vehicleA.route === 'straight' && vehicleB.route !== 'straight') return true;
   if (vehicleA.route !== 'straight' && vehicleB.route === 'straight') return false;
 
-  // 7. Deterministic tie breaker: lower ID has priority
+  // 8. Deterministic tie breaker: lower ID has priority
   return (vehicleA.id || 0) < (vehicleB.id || 0);
 }
 window.hasRightOfWay = hasRightOfWay;
@@ -2636,21 +2642,20 @@ class Vehicle3D {
     this.type = isAmbulance ? 'ambulance' : vehicleType;
 
     // Multi-lane assignment: Lane 0 (outer / curb, offset 6.0), Lane 1 (inner / median, offset 2.0)
-    if (laneIndex !== null && laneIndex !== undefined) {
-      this.laneIndex = (laneIndex === 1) ? 1 : 0;
-    } else if (this.isAmbulance) {
-      // Emergency vehicle dynamically chooses the lane with fewer queued vehicles
-      const countL0 = vehicles3D.filter(v => v.approach === this.approach && !v.hasTurned && v.laneIndex === 0).length;
-      const countL1 = vehicles3D.filter(v => v.approach === this.approach && !v.hasTurned && v.laneIndex === 1).length;
-      if (countL0 !== countL1) {
-        this.laneIndex = (countL1 < countL0) ? 1 : 0;
-      } else {
-        this.laneIndex = (this.route === 'left') ? 0 : (this.route === 'right') ? 1 : 0;
-      }
-    } else if (this.route === 'left') {
+    // Turning lane invariant:
+    // Lane 0: dedicated to curb turns (left) and straight
+    // Lane 1: dedicated to median turns (right) and straight
+    if (this.route === 'left') {
       this.laneIndex = 0; // Curb turn: Lane 0
     } else if (this.route === 'right') {
       this.laneIndex = 1; // Wide turn: Lane 1
+    } else if (laneIndex !== null && laneIndex !== undefined) {
+      this.laneIndex = (laneIndex === 1) ? 1 : 0;
+    } else if (this.isAmbulance) {
+      // Emergency vehicle going straight dynamically chooses the lane with fewer queued vehicles
+      const countL0 = vehicles3D.filter(v => v.approach === this.approach && !v.hasTurned && v.laneIndex === 0).length;
+      const countL1 = vehicles3D.filter(v => v.approach === this.approach && !v.hasTurned && v.laneIndex === 1).length;
+      this.laneIndex = (countL1 < countL0) ? 1 : 0;
     } else {
       // Straight vehicles distribute across both lanes
       this.laneIndex = (Math.random() < 0.5) ? 0 : 1;
@@ -2932,6 +2937,7 @@ class Vehicle3D {
         if (signal === 'RED') {
           this.entryPermission = 'DENIED_RED';
           this.inIntersection = false;
+          this.hasEnteredOnGreen = false;
 
           if (distToStop >= 28.0) {
             targetSpeed = cruiseSpeed;
@@ -3246,7 +3252,7 @@ class Vehicle3D {
       if (longProj < 0.2) continue; // Trailing or alongside; ignore for forward lookahead
 
       if (testOBBCollision(lookOBB, other.getOBB(), 0.04)) {
-        if (!hasRightOfWay(this, other)) {
+        if (!hasRightOfWay(this, other) && !this.isDeadlockPriority) {
           targetSpeed = Math.min(targetSpeed, Math.max(0, other.speed * 0.85));
           if (other.speed < 0.05) {
             const gap = this.getDistanceToVehicleAhead(other);
@@ -3387,7 +3393,10 @@ class Vehicle3D {
               if (hasRightOfWay(this, other) || this.isDeadlockPriority) {
                 const curDist = Math.hypot(this.mesh.position.x - other.mesh.position.x, this.mesh.position.z - other.mesh.position.z);
                 const nextDist = Math.hypot(testX - other.mesh.position.x, testZ - other.mesh.position.z);
-                if (nextDist >= curDist - 0.01) {
+                const dxOther = other.mesh.position.x - testX;
+                const dzOther = other.mesh.position.z - testZ;
+                const otherInFront = (dxOther * sinH + dzOther * cosH) > 0.1;
+                if (nextDist >= curDist - 0.05 || !otherInFront) {
                   continue; // Priority vehicle moving away/clearing
                 }
               }
@@ -3554,7 +3563,10 @@ class Vehicle3D {
                   if (hasRightOfWay(this, other) || this.isDeadlockPriority) {
                     const curDist = Math.hypot(p.x - other.mesh.position.x, p.z - other.mesh.position.z);
                     const nextDist = Math.hypot(testX - other.mesh.position.x, testZ - other.mesh.position.z);
-                    if (nextDist >= curDist - 0.01) {
+                    const dxOther = other.mesh.position.x - testX;
+                    const dzOther = other.mesh.position.z - testZ;
+                    const otherInFront = (dxOther * Math.sin(heading) + dzOther * Math.cos(heading)) > 0.1;
+                    if (nextDist >= curDist - 0.05 || !otherInFront) {
                       continue; // Priority vehicle moving away/clearing
                     }
                   }
@@ -3626,7 +3638,10 @@ class Vehicle3D {
               if (hasRightOfWay(this, other) || this.isDeadlockPriority) {
                 const curDist = Math.hypot(p.x - other.mesh.position.x, p.z - other.mesh.position.z);
                 const nextDist = Math.hypot(bx - other.mesh.position.x, bz - other.mesh.position.z);
-                if (nextDist >= curDist - 0.01) {
+                const dxOther = other.mesh.position.x - bx;
+                const dzOther = other.mesh.position.z - bz;
+                const otherInFront = (dxOther * Math.sin(nextHeading) + dzOther * Math.cos(nextHeading)) > 0.1;
+                if (nextDist >= curDist - 0.05 || !otherInFront) {
                   continue; // Priority vehicle moving away/clearing along curve
                 }
               }
@@ -4161,10 +4176,10 @@ function handle3DTrafficSpawner(now) {
 
     // Multi-lane selection:
     let chosenLane = 0;
-    if (route === 'turn_right') {
-      chosenLane = 0; // Outer lane for right turn
-    } else if (route === 'turn_left') {
-      chosenLane = 1; // Inner lane for left turn
+    if (route === 'turn_right' || route === 'right') {
+      chosenLane = 1; // Inner median lane for right turn across intersection
+    } else if (route === 'turn_left' || route === 'left') {
+      chosenLane = 0; // Outer curb lane for left turn
     } else {
       // Balance straight traffic across Lane 0 and Lane 1
       const countL0 = vehicles3D.filter(v => v.approach === chosenApproach && v.laneIndex === 0 && !v.hasTurned).length;
