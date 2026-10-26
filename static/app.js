@@ -264,6 +264,22 @@ function applyState(serverState) {
     }
   }
 
+  // Emergency vehicle synchronization: if backend has active emergency preemption,
+  // ensure the 3D scene has an active ambulance to clear the corridor
+  if (state.emergencyActive && state.emergencyApproach) {
+    const hasAmb = vehicles3D.some(v => v.isAmbulance);
+    if (!hasAmb && (!window.lastClearedAmbulance || Date.now() - window.lastClearedAmbulance > 5000)) {
+      spawnAmbulance3D(state.emergencyApproach, state.emergencyRoute || 'straight', 'serverStateSync', 'remote_emergency_preemption');
+    }
+  } else if (!state.emergencyActive) {
+    for (let i = vehicles3D.length - 1; i >= 0; i--) {
+      if (vehicles3D[i].isAmbulance && vehicles3D[i].hasClearedIntersection()) {
+        vehicles3D[i].destroy();
+        vehicles3D.splice(i, 1);
+      }
+    }
+  }
+
   updateUI();
 }
 
@@ -2769,18 +2785,29 @@ class Vehicle3D {
 
       const otherInBox = Math.abs(other.mesh.position.x) <= 8.5 && Math.abs(other.mesh.position.z) <= 8.5;
       if (otherInBox) {
-        // Vehicle from a conflicting approach still occupying the box
+        // Vehicle from a conflicting approach still occupying the box (e.g. clearing previous phase)
         if (other.approach !== this.approach) {
           return false;
         }
-        // Vehicle from same approach and same lane that is stopped or slow inside the box
-        if (other.laneIndex === this.laneIndex && other.speed < 0.15) {
-          return false;
+        // Vehicle from same approach:
+        if (other.laneIndex === this.laneIndex) {
+          // Same lane: cannot enter if vehicle ahead is stopped or slow inside the box
+          if (other.speed < 0.15) {
+            return false;
+          }
+          // Also verify safe entry headway so follower does not tailgate into the junction
+          let headwayIntoBox = 999;
+          if (this.approach === 'north') headwayIntoBox = other.mesh.position.z - (-8.5);
+          else if (this.approach === 'south') headwayIntoBox = 8.5 - other.mesh.position.z;
+          else if (this.approach === 'east') headwayIntoBox = 8.5 - other.mesh.position.x;
+          else if (this.approach === 'west') headwayIntoBox = other.mesh.position.x - (-8.5);
+          if (headwayIntoBox < 5.0) {
+            return false;
+          }
         }
-        // Non-parallel paths: if either vehicle is turning, they cross paths and cannot share the box
-        if (this.route !== 'straight' || other.route !== 'straight') {
-          return false;
-        }
+        // NOTE: Different lanes in same approach (Lane 0 vs Lane 1) are physically separated by 4.0m
+        // and have parallel or diverging trajectories (curb turn, median turn, straight).
+        // They do NOT conflict with each other.
       }
     }
 
@@ -3150,18 +3177,17 @@ class Vehicle3D {
         } else if (bumperGap <= minStoppedGap) {
           targetSpeed = 0;
           this.speed = Math.max(0, this.speed - 0.08); // Assertive queue braking to prevent inertia encroachment
-        } else if (other.speed < 0.05) {
-          // Lead vehicle is stopped in queue or at stop line
-          const approachRatio = Math.max(0, (bumperGap - minStoppedGap) / 16.0);
-          const safeApproachSpeed = Math.min(cruiseSpeed * 0.65, Math.pow(approachRatio, 1.15) * cruiseSpeed);
-          targetSpeed = Math.min(targetSpeed, safeApproachSpeed);
         } else {
-          // Lead vehicle is moving: maintain dynamic headway scaling with speed
-          const dynamicGap = minStoppedGap + (this.speed / Math.max(0.1, cruiseSpeed)) * 3.5;
-          if (bumperGap < dynamicGap + 8.0) {
-            const gapRatio = Math.max(0, (bumperGap - minStoppedGap) / (dynamicGap + 8.0 - minStoppedGap));
-            const matchSpeed = other.speed * Math.min(1.10, Math.pow(gapRatio, 1.1) * 1.05);
-            targetSpeed = Math.min(targetSpeed, matchSpeed);
+          const gapAboveMin = bumperGap - minStoppedGap;
+          if (other.speed < 0.05) {
+            // Lead vehicle is stopped in queue or at stop line: smoothly decelerate to rest at minStoppedGap
+            const safeApproachSpeed = Math.min(cruiseSpeed * 0.65, Math.sqrt(gapAboveMin * 1.8));
+            targetSpeed = Math.min(targetSpeed, safeApproachSpeed);
+          } else {
+            // Lead vehicle is moving: match leader speed and smoothly spool up queue headway
+            const followSpeed = other.speed + Math.min(cruiseSpeed * 0.35, gapAboveMin * 0.30);
+            const maxSafeSpeed = Math.min(cruiseSpeed, followSpeed);
+            targetSpeed = Math.min(targetSpeed, maxSafeSpeed);
           }
         }
       }
@@ -3178,6 +3204,7 @@ class Vehicle3D {
       this.stoppedFrames = 0;
     }
 
+    this.isDeadlockPriority = false;
     if (this.stoppedFrames > 25) {
       // Vehicle stalled inside intersection for > 25 frames
       let hasPriorityInDeadlock = true;
@@ -3193,6 +3220,7 @@ class Vehicle3D {
       }
       if (hasPriorityInDeadlock) {
         // Priority vehicle breaks deadlock by maintaining clearance propulsion along its route
+        this.isDeadlockPriority = true;
         targetSpeed = Math.max(cruiseSpeed * 0.5, 0.22);
         this.speed = Math.max(this.speed, 0.15);
       }
@@ -3356,6 +3384,13 @@ class Vehicle3D {
             const other = allVehicles[j];
             if (other === this) continue;
             if (testOBBCollision(testOBB, other.getOBB(), 0.02)) {
+              if (hasRightOfWay(this, other) || this.isDeadlockPriority) {
+                const curDist = Math.hypot(this.mesh.position.x - other.mesh.position.x, this.mesh.position.z - other.mesh.position.z);
+                const nextDist = Math.hypot(testX - other.mesh.position.x, testZ - other.mesh.position.z);
+                if (nextDist >= curDist - 0.01) {
+                  continue; // Priority vehicle moving away/clearing
+                }
+              }
               hitOther = true;
               break;
             }
@@ -3516,6 +3551,13 @@ class Vehicle3D {
                 const other = allVehicles[j];
                 if (other === this) continue;
                 if (testOBBCollision(testOBB, other.getOBB(), 0.02)) {
+                  if (hasRightOfWay(this, other) || this.isDeadlockPriority) {
+                    const curDist = Math.hypot(p.x - other.mesh.position.x, p.z - other.mesh.position.z);
+                    const nextDist = Math.hypot(testX - other.mesh.position.x, testZ - other.mesh.position.z);
+                    if (nextDist >= curDist - 0.01) {
+                      continue; // Priority vehicle moving away/clearing
+                    }
+                  }
                   hit = true;
                   break;
                 }
@@ -3581,6 +3623,13 @@ class Vehicle3D {
             const other = allVehicles[j];
             if (other === this) continue;
             if (testOBBCollision(testOBB, other.getOBB(), 0.02)) {
+              if (hasRightOfWay(this, other) || this.isDeadlockPriority) {
+                const curDist = Math.hypot(p.x - other.mesh.position.x, p.z - other.mesh.position.z);
+                const nextDist = Math.hypot(bx - other.mesh.position.x, bz - other.mesh.position.z);
+                if (nextDist >= curDist - 0.01) {
+                  continue; // Priority vehicle moving away/clearing along curve
+                }
+              }
               hit = true;
               break;
             }
@@ -3664,6 +3713,7 @@ class Vehicle3D {
     scene.remove(this.mesh);
   }
 }
+window.Vehicle3D = Vehicle3D;
 
 function clearAllVehicles3D() {
   vehicles3D.forEach(v => v.destroy());
@@ -3794,6 +3844,7 @@ class Pedestrian3D {
     scene.remove(this.mesh);
   }
 }
+window.Pedestrian3D = Pedestrian3D;
 
 function spawnPedestrians3D(crossing = 'north') {
   clearAllPedestrians3D();
